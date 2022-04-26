@@ -5,6 +5,7 @@ import io.quarkus.pnc.importer.rest.ArtifactEndpoint;
 import io.quarkus.pnc.importer.rest.PageParameters;
 import io.quarkus.pnc.importer.rest.SwaggerConstants;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 import picocli.CommandLine;
@@ -85,7 +86,7 @@ public class Import implements Runnable {
 
     private void generateBuildYaml(Artifact selectedArtifact) {
         String scm = selectedArtifact.getBuild().getScmRepository().getExternalUrl();
-        System.out.println("build-config.yaml fragment: \n\n\n");
+        System.out.println("build-config.yaml fragment: \n");
 
         String projectName = selectedArtifact.getBuild().getProject().getName();
         String outName = projectName.replaceAll("/", "-");
@@ -95,14 +96,12 @@ public class Import implements Runnable {
                 "    scmRevision: \"{{ " + outName + " }}\"\n" +
                 "    buildScript: " + selectedArtifact.getBuild().getBuildConfigRevision().getBuildScript() + "\n" +
                 "    buildType: " + selectedArtifact.getBuild().getBuildConfigRevision().getBuildType() + "\n");
-
-        System.out.println("\n\n\n");
     }
 
     private void generateUpstreamSourcesYaml(Artifact selectedArtifact) {
         try {
             String scm = selectedArtifact.getBuild().getScmRepository().getExternalUrl();
-            System.out.println("upstream_sources.yml fragment: \n\n\n");
+            System.out.println("upstream_sources.yml fragment: \n");
             String inferredTag = selectedArtifact.getBuild().getScmTag().replaceAll("\\.redhat.*", "").replaceAll("-redhat.*", "");
 
             String selectedCommit = "<< FIX ME >>";
@@ -110,6 +109,7 @@ public class Import implements Runnable {
 
             Path publicCheckout = Files.createTempDirectory("public-checkout");
             List<Ref> possibleTags = new ArrayList<>();
+            List<String> possibleBranches = new ArrayList<>();
             var publicGit = Git.cloneRepository().setDirectory(publicCheckout.toFile())
                     .setURI(selectedArtifact.getBuild().getScmRepository().getExternalUrl())
                     .call();
@@ -122,7 +122,7 @@ public class Import implements Runnable {
             if (possibleTags.size() == 1) {
                 selectedCommit = possibleTags.get(0).getPeeledObjectId().name();
             } else {
-                System.out.println("Multiple potential tags found, please select the appropriate one: ");
+                print("Multiple potential tags found, please select the appropriate one: ");
                 Map<Integer, Ref> ids = new TreeMap<>();
                 int count = 1;
                 for (var ref : possibleTags) {
@@ -134,6 +134,29 @@ public class Import implements Runnable {
                 var selectedRef = ids.get(selection);
                 selectedCommit = selectedRef.getPeeledObjectId().name();
             }
+
+            for (var b : publicGit.branchList().call()) {
+                if (publicGit.log().add(b.getObjectId()).addRange(ObjectId.fromString(selectedCommit), b.getObjectId())
+                        .call().iterator().hasNext()) {
+                    possibleBranches.add(b.getName());
+                }
+            }
+            if (possibleBranches.size() == 1) {
+                branch = possibleBranches.get(0);
+            } else {
+                print("Multiple potential tags found, please select the appropriate one: ");
+                Map<Integer, String> ids = new TreeMap<>();
+                int count = 1;
+                for (var ref : possibleBranches) {
+                    ids.put(count, ref);
+                    System.out.println("[" + GREEN + count + RESET + "] " + ref);
+                    count++;
+                }
+                int selection = Integer.parseInt(System.console().readLine());
+                branch = ids.get(selection);
+            }
+            branch = branch.replaceAll("refs/heads/","");
+
 
             String projectName = selectedArtifact.getBuild().getProject().getName();
             System.out.println(
@@ -147,7 +170,6 @@ public class Import implements Runnable {
                             "  - tagged\n" +
                             "  url: " + scm + "\n");
 
-            System.out.println("\n\n\n");
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
