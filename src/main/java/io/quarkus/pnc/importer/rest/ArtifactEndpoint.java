@@ -17,6 +17,7 @@
  */
 package io.quarkus.pnc.importer.rest;
 
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import javax.ws.rs.BeanParam;
@@ -32,6 +33,7 @@ import javax.ws.rs.core.MediaType;
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @RestClient
+@RegisterRestClient(configKey = "pnc")
 public interface ArtifactEndpoint {
     static final String A_ID = "ID of the artifact";
     static final String A_REV = "Revision number of the artifact";

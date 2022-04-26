@@ -20,6 +20,7 @@ package io.quarkus.pnc.importer.rest;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
+import lombok.Data;
 
 import java.time.Instant;
 import java.util.Map;
@@ -29,6 +30,7 @@ import java.util.Map;
  *
  * @author Honza Brázdil &lt;jbrazdil@redhat.com&gt;
  */
+@Data
 @JsonDeserialize(builder = Build.Builder.class)
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class Build extends BuildRef {
