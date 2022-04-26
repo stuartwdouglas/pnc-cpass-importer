@@ -1,0 +1,136 @@
+/**
+ * JBoss, Home of Professional Open Source.
+ * Copyright 2014-2022 Red Hat, Inc., and individual contributors
+ * as indicated by the @author tags.
+ * <p>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * <p>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p>
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.quarkus.pnc.importer.rest;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
+
+import java.time.Instant;
+import java.util.Map;
+
+/**
+ * A build config cointains the information needed to execute a build of a project, i.e. link to the sources, the build
+ * script, the build system image needed to run.
+ *
+ * @author Honza Brázdil &lt;jbrazdil@redhat.com&gt;
+ */
+@Data
+@ToString(callSuper = true)
+@EqualsAndHashCode(callSuper = true)
+@JsonDeserialize(builder = BuildConfiguration.Builder.class)
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class BuildConfiguration extends BuildConfigurationRef {
+
+    /**
+     * SCM repository where the build's sources are stored.
+     */
+    protected final SCMRepository scmRepository;
+
+    /**
+     * The project which the build config is part of.
+     */
+    protected final ProjectRef project;
+
+    /**
+     * Build environment that the build will be run in.
+     */
+    protected final Environment environment;
+
+    /**
+     * List of dependencies. These dependencies are normally run before build of this build config.
+     */
+    protected final Map<String, BuildConfigurationRef> dependencies;
+
+    /**
+     * The product version which the build config is part of.
+     */
+    protected final ProductVersionRef productVersion;
+
+    /**
+     * The list of group configs which include this build config.
+     */
+    protected final Map<String, GroupConfigurationRef> groupConfigs;
+
+    /**
+     * Map of build parameters. These parameters can influence various parts of the build like alignment phase or
+     * builder pod memory available.
+     */
+    protected final Map<String, String> parameters;
+
+    /**
+     * User who created the build config.
+     */
+    protected final User creationUser;
+
+    /**
+     * User who last modified the build config.
+     */
+    protected final User modificationUser;
+
+    @lombok.Builder(builderClassName = "Builder", toBuilder = true)
+    protected BuildConfiguration(
+            SCMRepository scmRepository,
+            ProjectRef project,
+            Environment environment,
+            Map<String, BuildConfigurationRef> dependencies,
+            ProductVersionRef productVersion,
+            Map<String, GroupConfigurationRef> groupConfigs,
+            Map<String, String> parameters,
+            String id,
+            String name,
+            String description,
+            String buildScript,
+            String scmRevision,
+            Instant creationTime,
+            Instant modificationTime,
+            BuildType buildType,
+            User creationUser,
+            User modificationUser,
+            String defaultAlignmentParams,
+            Boolean brewPullActive) {
+        super(
+                id,
+                name,
+                description,
+                buildScript,
+                scmRevision,
+                creationTime,
+                modificationTime,
+                buildType,
+                defaultAlignmentParams,
+                brewPullActive);
+        this.scmRepository = scmRepository;
+        this.project = project;
+        this.environment = environment;
+        this.dependencies = dependencies;
+        this.productVersion = productVersion;
+        this.groupConfigs = groupConfigs;
+        this.parameters = parameters;
+        this.creationUser = creationUser;
+        this.modificationUser = modificationUser;
+    }
+
+    @JsonPOJOBuilder(withPrefix = "")
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static final class Builder {
+    }
+}
