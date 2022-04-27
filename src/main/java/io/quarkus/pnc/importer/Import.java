@@ -11,8 +11,10 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 import picocli.CommandLine;
 
 import javax.inject.Inject;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -21,12 +23,19 @@ import java.util.TreeMap;
 
 @CommandLine.Command(name = "import")
 public class Import implements Runnable {
+
+    /**
+     * TODO: this should be read from the file
+     */
+    private static final String DEFAULT_SYSTEM_IMAGE = "builder-rhel-7-j11.0.11-9-mvn3.6.3-gradle7.0.2:1.0.6";
+
     public static final String GREEN = "\u001b[32m";
     public static final String RESET = "\u001b[39m";
+    public static final String REFS_TAGS = "refs/tags/";
+    public static final String REFS_HEADS = "refs/heads/";
 
     @CommandLine.Option(names = "-p", description = "Path to the CPAAS config checkout (usually a checkout of Gitlab application-services/quarkus-components)")
-    String uri;
-
+    Path path;
 
     @CommandLine.Parameters(description = "Artifact identifier to search for")
     String artifact;
@@ -43,6 +52,10 @@ public class Import implements Runnable {
         pageParams.setQ("identifier=like=\"%" + artifact + "%\"");
         pageParams.setSort("sort=desc=build.startTime");
         var results = artifactEndpoint.getAll(pageParams, null, null, null);
+        if (results.getContent().isEmpty()) {
+            System.out.println("No existing builds found");
+            System.exit(1);
+        }
 
         print("Please select the artifact to use as the base for the build:");
         Map<Integer, Artifact> ids = new TreeMap<>();
@@ -79,33 +92,64 @@ public class Import implements Runnable {
             System.err.println("Pre build sync not enabled for " + selectedArtifact.getBuild().getScmRepository().getExternalUrl() + " in PNC, this is required");
             System.exit(1);
         }
-        generateBuildYaml(selectedArtifact);
-        generateUpstreamSourcesYaml(selectedArtifact);
+        String tag = generateUpstreamSourcesYaml(selectedArtifact);
+        generateBuildYaml(selectedArtifact, tag);
 
     }
 
-    private void generateBuildYaml(Artifact selectedArtifact) {
-        String scm = selectedArtifact.getBuild().getScmRepository().getExternalUrl();
-        System.out.println("build-config.yaml fragment: \n");
-
-        String projectName = selectedArtifact.getBuild().getProject().getName();
-        String outName = projectName.replaceAll("/", "-");
-        System.out.println("  - name: \"{{ " + outName + "-version }}\"\n" +
-                "    project: " + projectName + "\n" +
-                "    scmUrl: " + scm + "\n" +
-                "    scmRevision: \"{{ " + outName + " }}\"\n" +
-                "    buildScript: " + selectedArtifact.getBuild().getBuildConfigRevision().getBuildScript() + "\n" +
-                "    buildType: " + selectedArtifact.getBuild().getBuildConfigRevision().getBuildType() + "\n");
-    }
-
-    private void generateUpstreamSourcesYaml(Artifact selectedArtifact) {
+    private void generateBuildYaml(Artifact selectedArtifact, String upstreamTag) {
         try {
             String scm = selectedArtifact.getBuild().getScmRepository().getExternalUrl();
-            System.out.println("upstream_sources.yml fragment: \n");
+
+            String projectName = selectedArtifact.getBuild().getProject().getName();
+            String outName = projectName.replaceAll("/", "-");
+            Path output = path.resolve("build-config.yaml");
+            var existing = new ArrayList<>(Files.readAllLines(output, StandardCharsets.UTF_8));
+            boolean foundHashBang = false;
+            boolean versionAdded = false;
+            for (var iter = existing.listIterator(); iter.hasNext(); ) {
+                String line = iter.next();
+                if (!foundHashBang) {
+                    if (line.startsWith("#!")) {
+                        foundHashBang = true;
+                    }
+                } else if (!versionAdded) {
+                    if (!line.startsWith("#!")) {
+                        iter.previous();
+                        iter.add("#!" + outName + "-version=" + upstreamTag);
+                        versionAdded = true;
+                    }
+                } else {
+                    if (line.equals("builds:")) {
+
+                        iter.add("  - name: \"{{ " + outName + "-version }}\"");
+                        iter.add("    project: " + projectName);
+                        iter.add("    scmUrl: " + scm);
+                        iter.add("    scmRevision: \"{{ " + outName + " }}\"");
+                        iter.add("    buildScript: " + selectedArtifact.getBuild().getBuildConfigRevision().getBuildScript());
+                        iter.add("    buildType: " + selectedArtifact.getBuild().getBuildConfigRevision().getBuildType());
+                        if (!Objects.equals(DEFAULT_SYSTEM_IMAGE, selectedArtifact.getBuild().getEnvironment().getSystemImageId())) {
+                            iter.add("    systemImageId: " + selectedArtifact.getBuild().getEnvironment().getSystemImageId());
+                        }
+                        break;
+                    }
+                }
+            }
+            Files.write(output, existing, StandardCharsets.UTF_8);
+
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private String generateUpstreamSourcesYaml(Artifact selectedArtifact) {
+        try {
+            String scm = selectedArtifact.getBuild().getScmRepository().getExternalUrl();
             String inferredTag = selectedArtifact.getBuild().getScmTag().replaceAll("\\.redhat.*", "").replaceAll("-redhat.*", "");
 
             String selectedCommit = "<< FIX ME >>";
             String branch = "<< FIX ME >>";
+            String actualTag;
 
             Path publicCheckout = Files.createTempDirectory("public-checkout");
             List<Ref> possibleTags = new ArrayList<>();
@@ -120,7 +164,13 @@ public class Import implements Runnable {
                 }
             }
             if (possibleTags.size() == 1) {
-                selectedCommit = possibleTags.get(0).getPeeledObjectId().name();
+                Ref ref = possibleTags.get(0);
+                if (ref.getPeeledObjectId() != null) {
+                    selectedCommit = ref.getPeeledObjectId().name();
+                } else  {
+                    selectedCommit = ref.getObjectId().name();
+                }
+                actualTag = ref.getName().replaceAll(REFS_TAGS, "");
             } else {
                 print("Multiple potential tags found, please select the appropriate one: ");
                 Map<Integer, Ref> ids = new TreeMap<>();
@@ -133,6 +183,7 @@ public class Import implements Runnable {
                 int selection = Integer.parseInt(System.console().readLine());
                 var selectedRef = ids.get(selection);
                 selectedCommit = selectedRef.getPeeledObjectId().name();
+                actualTag = selectedRef.getName().replaceAll(REFS_TAGS, "");
             }
 
             for (var b : publicGit.branchList().call()) {
@@ -155,21 +206,19 @@ public class Import implements Runnable {
                 int selection = Integer.parseInt(System.console().readLine());
                 branch = ids.get(selection);
             }
-            branch = branch.replaceAll("refs/heads/","");
+            branch = branch.replaceAll(REFS_HEADS, "");
 
-
-            String projectName = selectedArtifact.getBuild().getProject().getName();
-            System.out.println(
-                    "- automerge: 'yes'\n" +
-                            "  branch: " + branch + "\n" +
-                            "  commit: " + selectedCommit + "\n" +
-                            "  dest_formats:\n" +
-                            "    branch:\n" +
-                            "      gen_source_repos: true\n" +
-                            "  update_policy:\n" +
-                            "  - tagged\n" +
-                            "  url: " + scm + "\n");
-
+            Path output = path.resolve("upstream_sources.yml");
+            Files.writeString(output, "- automerge: 'yes'\n" +
+                    "  branch: " + branch + "\n" +
+                    "  commit: " + selectedCommit + "\n" +
+                    "  dest_formats:\n" +
+                    "    branch:\n" +
+                    "      gen_source_repos: true\n" +
+                    "  update_policy:\n" +
+                    "  - tagged\n" +
+                    "  url: " + scm + "\n", StandardCharsets.UTF_8, StandardOpenOption.APPEND);
+            return actualTag;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
