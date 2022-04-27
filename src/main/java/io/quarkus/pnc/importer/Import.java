@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.function.Function;
 
 @CommandLine.Command(name = "import")
 public class Import implements Runnable {
@@ -58,8 +59,8 @@ public class Import implements Runnable {
         }
 
         print("Please select the artifact to use as the base for the build:");
-        Map<Integer, Artifact> ids = new TreeMap<>();
-        int count = 1;
+        List<Artifact> possible = new ArrayList<>();
+
         for (var artifact : results.getContent()) {
             if (artifact.getBuild() == null) {
                 continue;
@@ -68,18 +69,9 @@ public class Import implements Runnable {
             if (!artifact.getIdentifier().contains(":pom:")) {
                 continue;
             }
-            ids.put(count, artifact);
-            if (!Objects.equals(artifact.getBuild().getScmRepository().getPreBuildSyncEnabled(), true)) {
-                System.out.println("[" + GREEN + count + RESET + "] " + artifact.getIdentifier() + " [no pre build sync]");
-            } else {
-                System.out.println("[" + GREEN + count + RESET + "] " + artifact.getIdentifier());
-            }
-            count++;
+            possible.add(artifact);
         }
-
-        int selection = Integer.parseInt(System.console().readLine());
-        Artifact selectedArtifact = ids.get(selection);
-        print("Selected: " + selectedArtifact.getIdentifier());
+        Artifact selectedArtifact = selectFromList(possible, s -> s.getIdentifier() + (s.getBuild().getScmRepository().getPreBuildSyncEnabled() ? "" : " [no pre build sync]"));
         if (selectedArtifact.getBuild() == null) {
             System.err.println("Could not proceed: no build information for selected artifact");
             System.exit(1);
@@ -167,21 +159,13 @@ public class Import implements Runnable {
                 Ref ref = possibleTags.get(0);
                 if (ref.getPeeledObjectId() != null) {
                     selectedCommit = ref.getPeeledObjectId().name();
-                } else  {
+                } else {
                     selectedCommit = ref.getObjectId().name();
                 }
                 actualTag = ref.getName().replaceAll(REFS_TAGS, "");
             } else {
                 print("Multiple potential tags found, please select the appropriate one: ");
-                Map<Integer, Ref> ids = new TreeMap<>();
-                int count = 1;
-                for (var ref : possibleTags) {
-                    ids.put(count, ref);
-                    System.out.println("[" + GREEN + count + RESET + "] " + ref.getName());
-                    count++;
-                }
-                int selection = Integer.parseInt(System.console().readLine());
-                var selectedRef = ids.get(selection);
+                var selectedRef = selectFromList(possibleTags, Ref::getName);
                 selectedCommit = selectedRef.getPeeledObjectId().name();
                 actualTag = selectedRef.getName().replaceAll(REFS_TAGS, "");
             }
@@ -196,15 +180,7 @@ public class Import implements Runnable {
                 branch = possibleBranches.get(0);
             } else {
                 print("Multiple potential tags found, please select the appropriate one: ");
-                Map<Integer, String> ids = new TreeMap<>();
-                int count = 1;
-                for (var ref : possibleBranches) {
-                    ids.put(count, ref);
-                    System.out.println("[" + GREEN + count + RESET + "] " + ref);
-                    count++;
-                }
-                int selection = Integer.parseInt(System.console().readLine());
-                branch = ids.get(selection);
+                branch = selectFromList(possibleBranches, Object::toString);
             }
             branch = branch.replaceAll(REFS_HEADS, "");
 
@@ -224,7 +200,30 @@ public class Import implements Runnable {
         }
     }
 
-    private void print(String s) {
+    private static void print(String s) {
         System.out.println(GREEN + s + RESET);
+    }
+
+    static <T> T selectFromList(List<T> list, Function<T, String> mapping) {
+        if (list.isEmpty()) {
+            throw new RuntimeException("No results to choose from");
+        }
+        Map<Integer, T> ids = new TreeMap<>();
+        int count = 1;
+        for (var obj : list) {
+            ids.put(count, obj);
+            System.out.println("[" + GREEN + count + RESET + "] " + mapping.apply(obj));
+            count++;
+        }
+        for (; ; ) {
+            try {
+                int selection = Integer.parseInt(System.console().readLine());
+                T selected = ids.get(selection);
+                print("Selected: " + mapping.apply(selected));
+                return selected;
+            } catch (Exception e) {
+                System.out.println("Invalid selection");
+            }
+        }
     }
 }
