@@ -117,7 +117,7 @@ public class Import implements Runnable {
                         iter.add("  - name: \"{{ " + outName + "-version }}\"");
                         iter.add("    project: " + projectName);
                         iter.add("    scmUrl: " + scm);
-                        iter.add("    scmRevision: \"{{ " + outName + " }}\"");
+                        iter.add("    scmRevision: \"{{ " + outName + "-version }}\"");
                         iter.add("    buildScript: " + selectedArtifact.getBuild().getBuildConfigRevision().getBuildScript());
                         iter.add("    buildType: " + selectedArtifact.getBuild().getBuildConfigRevision().getBuildType());
                         if (!Objects.equals(DEFAULT_SYSTEM_IMAGE, selectedArtifact.getBuild().getEnvironment().getSystemImageId())) {
