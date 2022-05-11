@@ -129,6 +129,7 @@ public class Import implements Runnable {
                 } else {
                     if (line.equals("builds:")) {
 
+                        iter.add("");
                         iter.add("  - name: \"{{ " + versionedName + " }}\"");
                         iter.add("    project: " + buildConfiguration.getProject().getName());
                         iter.add("    scmUrl: " + scm);
