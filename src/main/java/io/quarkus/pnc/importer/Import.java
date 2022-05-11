@@ -2,6 +2,9 @@ package io.quarkus.pnc.importer;
 
 import io.quarkus.pnc.importer.rest.Artifact;
 import io.quarkus.pnc.importer.rest.ArtifactEndpoint;
+import io.quarkus.pnc.importer.rest.ArtifactRef;
+import io.quarkus.pnc.importer.rest.BuildConfiguration;
+import io.quarkus.pnc.importer.rest.BuildConfigurationEndpoint;
 import io.quarkus.pnc.importer.rest.PageParameters;
 import io.quarkus.pnc.importer.rest.SwaggerConstants;
 import org.eclipse.jgit.api.Git;
@@ -16,11 +19,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @CommandLine.Command(name = "import")
 public class Import implements Runnable {
@@ -44,6 +50,10 @@ public class Import implements Runnable {
     @Inject
     @RestClient
     ArtifactEndpoint artifactEndpoint;
+
+    @Inject
+    @RestClient
+    BuildConfigurationEndpoint buildConfigurationEndpoint;
 
     @Override
     public void run() {
@@ -84,21 +94,26 @@ public class Import implements Runnable {
             System.err.println("Pre build sync not enabled for " + selectedArtifact.getBuild().getScmRepository().getExternalUrl() + " in PNC, this is required");
             System.exit(1);
         }
+
+
+        var buildconfigId = selectedArtifact.getBuild().getBuildConfigRevision().getId();
+        var buildConfig = buildConfigurationEndpoint.getSpecific(buildconfigId);
+
         String tag = generateUpstreamSourcesYaml(selectedArtifact);
-        generateBuildYaml(selectedArtifact, tag);
+        generateBuildYaml(selectedArtifact, tag, buildConfig);
 
     }
 
-    private void generateBuildYaml(Artifact selectedArtifact, String upstreamTag) {
+    private void generateBuildYaml(Artifact selectedArtifact, String upstreamTag, BuildConfiguration buildConfiguration) {
         try {
             String scm = selectedArtifact.getBuild().getScmRepository().getExternalUrl();
 
             String projectName = selectedArtifact.getBuild().getProject().getName();
-            String outName = projectName.replaceAll("/", "-");
             Path output = path.resolve("build-config.yaml");
             var existing = new ArrayList<>(Files.readAllLines(output, StandardCharsets.UTF_8));
             boolean foundHashBang = false;
             boolean versionAdded = false;
+            String versionedName = versionName(buildConfiguration.getName());
             for (var iter = existing.listIterator(); iter.hasNext(); ) {
                 String line = iter.next();
                 if (!foundHashBang) {
@@ -108,20 +123,26 @@ public class Import implements Runnable {
                 } else if (!versionAdded) {
                     if (!line.startsWith("#!")) {
                         iter.previous();
-                        iter.add("#!" + outName + "-version=" + upstreamTag);
+                        iter.add("#!" + versionedName + "=" + upstreamTag);
                         versionAdded = true;
                     }
                 } else {
                     if (line.equals("builds:")) {
 
-                        iter.add("  - name: \"{{ " + outName + "-version }}\"");
-                        iter.add("    project: " + projectName);
+                        iter.add("  - name: \"{{ " + versionedName + " }}\"");
+                        iter.add("    project: " + buildConfiguration.getProject().getName());
                         iter.add("    scmUrl: " + scm);
-                        iter.add("    scmRevision: \"{{ " + outName + "-version }}\"");
+                        iter.add("    scmRevision: \"{{ " + versionedName + " }}\"");
                         iter.add("    buildScript: " + selectedArtifact.getBuild().getBuildConfigRevision().getBuildScript());
                         iter.add("    buildType: " + selectedArtifact.getBuild().getBuildConfigRevision().getBuildType());
                         if (!Objects.equals(DEFAULT_SYSTEM_IMAGE, selectedArtifact.getBuild().getEnvironment().getSystemImageId())) {
                             iter.add("    systemImageId: " + selectedArtifact.getBuild().getEnvironment().getSystemImageId());
+                        }
+                        if (!buildConfiguration.getDependencies().isEmpty()) {
+                            iter.add("    dependencies:");
+                            for (var entry : buildConfiguration.getDependencies().values()) {
+                                iter.add("    - {{ \"" + versionName(entry.getName()) + "\" }}");
+                            }
                         }
                         break;
                     }
@@ -132,6 +153,14 @@ public class Import implements Runnable {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private String versionName(String name) {
+        int pos = name.lastIndexOf('-');
+        if (pos == -1) {
+            return name + "-version";
+        }
+        return name.substring(0, pos) + "-version";
     }
 
     private String generateUpstreamSourcesYaml(Artifact selectedArtifact) {
@@ -155,6 +184,10 @@ public class Import implements Runnable {
                     possibleTags.add(ref);
                 }
             }
+            if (possibleTags.size() == 0) {
+                possibleTags.addAll(allTags);
+            }
+            possibleTags.sort(Comparator.comparing(Object::toString));
             if (possibleTags.size() == 1) {
                 Ref ref = possibleTags.get(0);
                 if (ref.getPeeledObjectId() != null) {
